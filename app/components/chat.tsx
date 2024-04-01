@@ -422,13 +422,13 @@ function useScrollToBottom(
 
   const [autoScroll, setAutoScroll] = useState(true);
   function scrollDomToBottom() {
-    const dom = scrollRef.current;
-    if (dom) {
-      requestAnimationFrame(() => {
-        setAutoScroll(true);
-        dom.scrollTo(0, dom.scrollHeight);
-      });
-    }
+    // const dom = scrollRef.current;
+    // if (dom) {
+    //   requestAnimationFrame(() => {
+    //     setAutoScroll(true);
+    //     dom.scrollTo(0, dom.scrollHeight);
+    //   });
+    // }
   }
 
   // auto scroll
