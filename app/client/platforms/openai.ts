@@ -12,6 +12,7 @@ import { useAccessStore, useAppConfig, useChatStore } from "@/app/store";
 import {
   AgentChatOptions,
   ChatOptions,
+  CreateRAGStoreOptions,
   getHeaders,
   LLMApi,
   LLMModel,
@@ -43,21 +44,43 @@ export interface OpenAIListModelResponse {
   }>;
 }
 
+interface RequestPayload {
+  messages: {
+    role: "system" | "user" | "assistant";
+    content: string | MultimodalContent[];
+  }[];
+  stream?: boolean;
+  model: string;
+  temperature: number;
+  presence_penalty: number;
+  frequency_penalty: number;
+  top_p: number;
+  max_tokens?: number;
+}
+
 export class ChatGPTApi implements LLMApi {
   private disableListModels = true;
 
   path(path: string, model?: string): string {
     const accessStore = useAccessStore.getState();
 
-    const isAzure = accessStore.provider === ServiceProvider.Azure;
+    let baseUrl = "";
 
-    if (isAzure && !accessStore.isValidAzure()) {
-      throw Error(
-        "incomplete azure config, please check it in your settings page",
-      );
+    if (accessStore.useCustomConfig) {
+      const isAzure = accessStore.provider === ServiceProvider.Azure;
+
+      if (isAzure && !accessStore.isValidAzure()) {
+        throw Error(
+          "incomplete azure config, please check it in your settings page",
+        );
+      }
+
+      if (isAzure) {
+        path = makeAzurePath(path, accessStore.azureApiVersion);
+      }
+
+      baseUrl = isAzure ? accessStore.azureUrl : accessStore.openaiUrl;
     }
-
-    let baseUrl = isAzure ? accessStore.azureUrl : accessStore.openaiUrl;
 
     if (baseUrl.length === 0) {
       const isApp = !!getClientConfig()?.isApp;
@@ -71,11 +94,6 @@ export class ChatGPTApi implements LLMApi {
     }
     if (!baseUrl.startsWith("http") && !baseUrl.startsWith(ApiPath.OpenAI)) {
       baseUrl = "https://" + baseUrl;
-    }
-
-    if (isAzure) {
-      path = makeAzurePath(path, accessStore.azureApiVersion);
-      return [baseUrl, model, path].join("/");
     }
 
     console.log("[Proxy Endpoint] ", baseUrl, path);
@@ -180,7 +198,8 @@ export class ChatGPTApi implements LLMApi {
         model: options.config.model,
       },
     };
-    const requestPayload = {
+
+    const requestPayload: RequestPayload = {
       messages,
       stream: options.config.stream,
       model: modelConfig.model,
@@ -188,21 +207,13 @@ export class ChatGPTApi implements LLMApi {
       presence_penalty: modelConfig.presence_penalty,
       frequency_penalty: modelConfig.frequency_penalty,
       top_p: modelConfig.top_p,
-      max_tokens: modelConfig.model.includes("vision")
-        ? modelConfig.max_tokens
-        : null,
       // max_tokens: Math.max(modelConfig.max_tokens, 1024),
       // Please do not ask me why not send max_tokens, no reason, this param is just shit, I dont want to explain anymore.
     };
 
     // add max_tokens to vision model
     if (visionModel) {
-      Object.defineProperty(requestPayload, "max_tokens", {
-        enumerable: true,
-        configurable: true,
-        writable: true,
-        value: modelConfig.max_tokens,
-      });
+      requestPayload["max_tokens"] = Math.max(modelConfig.max_tokens, 4000);
     }
 
     console.log("[Request] openai payload: ", requestPayload);
@@ -362,10 +373,39 @@ export class ChatGPTApi implements LLMApi {
     }
   }
 
+  async createRAGStore(options: CreateRAGStoreOptions): Promise<void> {
+    try {
+      const accessStore = useAccessStore.getState();
+      const isAzure = accessStore.provider === ServiceProvider.Azure;
+      let baseUrl = isAzure ? accessStore.azureUrl : accessStore.openaiUrl;
+      const requestPayload = {
+        sessionId: options.chatSessionId,
+        fileInfos: options.fileInfos,
+        baseUrl: baseUrl,
+      };
+      console.log("[Request] rag store payload: ", requestPayload);
+      const controller = new AbortController();
+      options.onController?.(controller);
+      let path = "/api/langchain/rag/store";
+      const chatPayload = {
+        method: "POST",
+        body: JSON.stringify(requestPayload),
+        signal: controller.signal,
+        headers: getHeaders(),
+      };
+      const res = await fetch(path, chatPayload);
+      if (res.status !== 200) throw new Error(await res.text());
+    } catch (e) {
+      console.log("[Request] failed to make a chat reqeust", e);
+      options.onError?.(e as Error);
+    }
+  }
+
   async toolAgentChat(options: AgentChatOptions) {
+    const visionModel = isVisionModel(options.config.model);
     const messages = options.messages.map((v) => ({
       role: v.role,
-      content: getMessageTextContent(v),
+      content: visionModel ? v.content : getMessageTextContent(v),
     }));
 
     const modelConfig = {
@@ -379,6 +419,7 @@ export class ChatGPTApi implements LLMApi {
     const isAzure = accessStore.provider === ServiceProvider.Azure;
     let baseUrl = isAzure ? accessStore.azureUrl : accessStore.openaiUrl;
     const requestPayload = {
+      chatSessionId: options.chatSessionId,
       messages,
       isAzure,
       azureApiVersion: accessStore.azureApiVersion,
