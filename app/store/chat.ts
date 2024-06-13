@@ -1,4 +1,4 @@
-import { trimTopic, getMessageTextContent } from "../utils";
+import { trimTopic, getMessageTextContent, getClientApi } from "../utils";
 
 import Locale, { getLang } from "../locales";
 import { showToast } from "../components/ui-lib";
@@ -392,8 +392,7 @@ export const useChatStore = createPersistStore(
           session.messages.push(botMessage);
         });
         const isEnableRAG = attachFiles && attachFiles?.length > 0;
-        var api: ClientApi;
-        api = new ClientApi(ModelProvider.GPT);
+        var api: ClientApi = getClientApi(modelConfig.model);
         if (
           config.pluginConfig.enable &&
           session.mask.usePlugins &&
@@ -484,13 +483,6 @@ export const useChatStore = createPersistStore(
             agentCall();
           }
         } else {
-          if (modelConfig.model.startsWith("gemini")) {
-            api = new ClientApi(ModelProvider.GeminiPro);
-          } else if (identifyDefaultClaudeModel(modelConfig.model)) {
-            api = new ClientApi(ModelProvider.Claude);
-          } else {
-            api = new ClientApi(ModelProvider.GPT);
-          }
           // make request
           api.llm.chat({
             messages: sendMessages,
@@ -667,14 +659,7 @@ export const useChatStore = createPersistStore(
         const session = get().currentSession();
         const modelConfig = session.mask.modelConfig;
 
-        var api: ClientApi;
-        if (modelConfig.model.startsWith("gemini")) {
-          api = new ClientApi(ModelProvider.GeminiPro);
-        } else if (identifyDefaultClaudeModel(modelConfig.model)) {
-          api = new ClientApi(ModelProvider.Claude);
-        } else {
-          api = new ClientApi(ModelProvider.GPT);
-        }
+        var api: ClientApi = getClientApi(modelConfig.model);
 
         // remove error messages if any
         const messages = session.messages;
